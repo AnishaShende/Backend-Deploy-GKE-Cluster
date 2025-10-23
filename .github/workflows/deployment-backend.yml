@@ -1,4 +1,4 @@
-name: Build, Push & Deploy Backend to GKE
+name: Build & Push Backend Docker image to GKE
 
 on:
   push:
@@ -16,32 +16,27 @@ jobs:
       GCP_REPO_NAME: my-backend-repo
       GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
       GKE_ZONE: ${{ secrets.GKE_ZONE }}
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Google Cloud SDK
-        run: |
-          curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-468.0.0-linux-x86_64.tar.gz
-          tar -xf google-cloud-cli-468.0.0-linux-x86_64.tar.gz
-          ./google-cloud-sdk/install.sh
-
-      - name: Authenticate with GCP
-        uses: google-github-actions/auth@v2
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
 
       - name: Configure Docker for GCR
-        run: gcloud auth configure-docker gcr.io --quiet
+        run: gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }} --quiet
 
       - name: Set image name and version
         id: vars
         run: |
-          REPO_PATH="$GCP_PROJECT_ID/$GCP_REPO_NAME"
+          REPO_PATH="${GCP_PROJECT_ID}/${GCP_REPO_NAME}"
           APP_NAME=$(basename $GITHUB_REPOSITORY)
-          
+
           if [ -f backend/VERSION ]; then
             VERSION=$(cat backend/VERSION)
           elif [ -f backend/package.json ]; then
@@ -49,9 +44,9 @@ jobs:
           else
             VERSION="0.0.1"
           fi
-          
-          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$REPO_PATH/$APP_NAME:$VERSION"
-          
+
+          IMAGE_NAME="${GCP_REGISTRY_HOSTNAME}/${REPO_PATH}/${APP_NAME}:${VERSION}"
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
           echo "Image to be used: $IMAGE_NAME"
@@ -61,17 +56,3 @@ jobs:
 
       - name: Push Docker image
         run: docker push ${{ steps.vars.outputs.image_name }}
-        
-      - name: Complete
-        run: echo "Done!"
-
-#       - name: Get GKE credentials
-#         run: |
-#           ./google-cloud-sdk/bin/gcloud container clusters get-credentials $GKE_CLUSTER \
-#             --zone $GKE_ZONE --project $GCP_PROJECT_ID
-
-#       - name: Deploy to GKE
-#         run: |
-#           sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
-#           kubectl apply -f backend/deployment.yaml
-#           kubectl rollout status deployment/backend-deployment --namespace=default
