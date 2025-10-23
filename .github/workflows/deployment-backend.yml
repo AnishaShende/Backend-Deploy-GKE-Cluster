@@ -10,24 +10,32 @@ on:
 jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
+    env:
+      GCP_API_KEYFILE: ${{ env.GCP_API_KEYFILE }}        # base64 encoded key
+      GCP_PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
+      GCP_REGISTRY_HOSTNAME: ${{ env.GCP_REGISTRY_HOSTNAME }}
+      GCP_IMAGE_NAME: ${{ env.GCP_IMAGE_NAME }}
+      GCP_REPO_NAME: ${{ env.GCP_REPO_NAME }}
+      GKE_CLUSTER: ${{ env.GKE_CLUSTER }}
+      GKE_ZONE: ${{ env.GKE_ZONE }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up GCP credentials
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Install Google Cloud SDK
+        run: |
+          curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-468.0.0-linux-x86_64.tar.gz
+          tar -xf google-cloud-cli-468.0.0-linux-x86_64.tar.gz
+          ./google-cloud-sdk/install.sh
 
-      - name: Configure Docker
-        run: gcloud auth configure-docker --quiet
+      - name: Decode and activate GCP service account
+        run: |
+          echo $GCP_API_KEYFILE | base64 -d > ./gcloud-api-key.json
+          ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=gcloud-api-key.json
+          ./google-cloud-sdk/bin/gcloud config set project $GCP_PROJECT_ID
 
-      # This just extract repo name and version(from package.json) dynamically, you can change version extraction according to you
-      - name: Set image name and version
+      - name: Set image name with version
         id: vars
         run: |
           REPO_NAME=$(basename $GITHUB_REPOSITORY)
@@ -38,33 +46,32 @@ jobs:
           else
             VERSION="0.0.1"
           fi
+          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$GCP_PROJECT_ID/$GCP_REPO_NAME/$REPO_NAME:$VERSION"
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
 
       - name: Build Docker image
         run: |
-          IMAGE_NAME="${{ steps.vars.outputs.repo_name }}:${{ steps.vars.outputs.version }}"
-          docker build -t "$IMAGE_NAME" ./backend
+          docker build ./backend -t ${{ steps.vars.outputs.image_name }}
 
-      - name: Push Docker image
+      - name: Push Docker image to GCR
         run: |
-          IMAGE_NAME="${{ steps.vars.outputs.repo_name }}:${{ steps.vars.outputs.version }}"
-          docker push "$IMAGE_NAME"
+          cat ./gcloud-api-key.json | docker login -u _json_key --password-stdin https://$GCP_REGISTRY_HOSTNAME
+          docker push ${{ steps.vars.outputs.image_name }}
 
       - name: Get GKE credentials
         run: |
-          gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
-            --zone ${{ secrets.GKE_ZONE }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+          ./google-cloud-sdk/bin/gcloud container clusters get-credentials $GKE_CLUSTER \
+            --zone $GKE_ZONE --project $GCP_PROJECT_ID
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: 'latest'
 
-      - name: Deploy backend to GKE
+      - name: Deploy to GKE
         run: |
-          IMAGE="${{ steps.vars.outputs.repo_name }}:${{ steps.vars.outputs.version }}"
-          sed -i "s|IMAGE_PLACEHOLDER|$IMAGE|g" backend/deployment.yaml
+          sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
           kubectl apply -f backend/deployment.yaml
           kubectl rollout status deployment/backend-deployment --namespace=default
