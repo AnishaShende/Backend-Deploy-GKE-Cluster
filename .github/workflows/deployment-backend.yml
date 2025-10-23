@@ -25,16 +25,16 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: ${{ env.GCP_SA_KEY }}
 
       - name: Configure Docker for GCP registry
-        run: gcloud auth configure-docker $GCP_REGISTRY_HOSTNAME --quiet
+        run: gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }} --quiet
 
       - name: Set image name and version
         id: vars
         run: |
-          REPO_PATH="$GCP_PROJECT_ID/$GCP_REPO_NAME"
-          APP_NAME=$(basename $GITHUB_REPOSITORY)
+          REPO_PATH="${GCP_PROJECT_ID}/${GCP_REPO_NAME}"
+          APP_NAME=$(basename "${GITHUB_REPOSITORY}")
           
           if [ -f backend/VERSION ]; then
             VERSION=$(cat backend/VERSION)
@@ -44,11 +44,11 @@ jobs:
             VERSION="0.0.1"
           fi
           
-          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$REPO_PATH/$APP_NAME:$VERSION"
+          IMAGE_NAME="${GCP_REGISTRY_HOSTNAME}/${REPO_PATH}/${APP_NAME}:${VERSION}"
           
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          echo "Image to be used: $IMAGE_NAME"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "Image to be used: ${IMAGE_NAME}"
 
       - name: Build Docker image
         run: docker build ./backend -t ${{ steps.vars.outputs.image_name }}
