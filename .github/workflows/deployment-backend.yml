@@ -1,58 +1,87 @@
-name: Build & Push Backend to GKE
+name: Build, Push & Deploy Backend to GKE
 
 on:
   push:
     paths:
-      - "backend/**"
+      - 'backend/**'
     branches:
       - main
 
 jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      # Assuming your GKE cluster is in 'us-central1-a' or similar. 
+      # If you're using Artifact Registry, the hostname is typically 'REGION-docker.pkg.dev'.
+      # For Container Registry (GCR), it's typically 'gcr.io' or 'us.gcr.io', etc.
+      # You can hardcode this or add a new secret. We'll use gcr.io as a default.
+      GCP_REGISTRY_HOSTNAME: gcr.io 
+      GCP_REPO_NAME: my-backend-repo # Replace with your actual repository name (e.g., in Artifact Registry)
+      GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+      GKE_ZONE: ${{ secrets.GKE_ZONE }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up GCP credentials
-        uses: google-github-actions/auth@v2
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
         with:
+          # Use your GCP_SA_KEY secret, which should contain the JSON key content
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Configure Docker for GCR
-        run: gcloud auth configure-docker gcr.io
-
-      - name: Build Docker image
+      - name: Set up Docker configuration
         run: |
-          IMAGE_NAME="gcr.io/${{ secrets.GCP_PROJECT_ID }}/backend"
-          docker build -t "$IMAGE_NAME:latest" -t "$IMAGE_NAME:${{ github.sha }}" ./backend
+          # Configure Docker to authenticate to GCR or Artifact Registry
+          gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }}
 
-      - name: Push Docker image
+      - name: Set image name with version
+        id: vars
         run: |
-          IMAGE_NAME="gcr.io/${{ secrets.GCP_PROJECT_ID }}/backend"
-          docker push "$IMAGE_NAME:latest"
-          docker push "$IMAGE_NAME:${{ github.sha }}"
+          # Use a variable for the image repository path
+          REPO_PATH="$GCP_PROJECT_ID/$GCP_REPO_NAME" 
+          
+          # Use the repository name from GitHub (e.g., 'my-app' from 'user/my-app')
+          REPO_NAME=$(basename $GITHUB_REPOSITORY) 
+          
+          if [ -f backend/VERSION ]; then
+            VERSION=$(cat backend/VERSION)
+          elif [ -f backend/package.json ]; then
+            VERSION=$(jq -r '.version' backend/package.json)
+          else
+            VERSION="0.0.1"
+          fi
+          
+          # Final image path: REGISTRY_HOSTNAME/PROJECT_ID/REPO_NAME/APP_NAME:VERSION
+          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$REPO_PATH/$REPO_NAME:$VERSION"
+          
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Using image: $IMAGE_NAME"
 
-      - name: Get GKE credentials
+      - name: Build and Push Docker image
         run: |
-          gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
-            --zone ${{ secrets.GKE_ZONE }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+          # Note: Since Docker is already configured to use the authenticated gcloud credentials,
+          # you can build and push in one step, or consecutively without extra login.
+          docker build ./backend -t ${{ steps.vars.outputs.image_name }}
+          docker push ${{ steps.vars.outputs.image_name }}
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
+      - name: Get GKE credentials and Install kubectl
+        uses: google-github-actions/get-gke-credentials@v2
         with:
-          version: "latest"
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Deploy backend to GKE using manifest
+      - name: Deploy to GKE
         run: |
-          # Replace image tag dynamically in the manifest before applying
-          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/backend:${{ github.sha }}"
-          sed -i "s|IMAGE_PLACEHOLDER|$IMAGE|g" backend/deployment.yaml
-
+          # Replace the placeholder in the deployment YAML
+          sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
+          
+          # Apply the configuration
           kubectl apply -f backend/deployment.yaml
+          
+          # Wait for the deployment to finish
           kubectl rollout status deployment/backend-deployment --namespace=default
