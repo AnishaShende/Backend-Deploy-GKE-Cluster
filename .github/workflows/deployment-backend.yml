@@ -35,7 +35,7 @@ jobs:
         id: vars
         run: |
           REPO_PATH="${GCP_PROJECT_ID}/${GCP_REPO_NAME}"
-          APP_NAME=$(basename $GITHUB_REPOSITORY)
+          APP_NAME=$(basename $GITHUB_REPOSITORY | tr '[:upper:]' '[:lower:]')
 
           if [ -f backend/VERSION ]; then
             VERSION=$(cat backend/VERSION)
