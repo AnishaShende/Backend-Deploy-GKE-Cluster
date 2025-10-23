@@ -11,13 +11,12 @@ jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
     env:
-      GCP_API_KEYFILE: ${{ env.GCP_API_KEYFILE }}       
-      GCP_PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
-      GCP_REGISTRY_HOSTNAME: ${{ env.GCP_REGISTRY_HOSTNAME }}
-      GCP_IMAGE_NAME: ${{ env.GCP_IMAGE_NAME }}
-      GCP_REPO_NAME: ${{ env.GCP_REPO_NAME }}
-      GKE_CLUSTER: ${{ env.GKE_CLUSTER }}
-      GKE_ZONE: ${{ env.GKE_ZONE }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_REGISTRY_HOSTNAME: gcr.io
+      GCP_REPO_NAME: my-backend-repo
+      GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+      GKE_ZONE: ${{ secrets.GKE_ZONE }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
     steps:
       - name: Checkout repository
@@ -29,16 +28,19 @@ jobs:
           tar -xf google-cloud-cli-468.0.0-linux-x86_64.tar.gz
           ./google-cloud-sdk/install.sh
 
-      - name: Decode and activate GCP service account
+      - name: Authenticate with GCP manually
         run: |
-          echo $GCP_API_KEYFILE | base64 -d > ./gcloud-api-key.json
-          ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=gcloud-api-key.json
+          echo "$GCP_SA_KEY" > ./gcloud-key.json
+          ./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=./gcloud-key.json
           ./google-cloud-sdk/bin/gcloud config set project $GCP_PROJECT_ID
+          ./google-cloud-sdk/bin/gcloud auth configure-docker $GCP_REGISTRY_HOSTNAME --quiet
 
-      - name: Set image name with version
+      - name: Set image name and version
         id: vars
         run: |
-          REPO_NAME=$(basename $GITHUB_REPOSITORY)
+          REPO_PATH="$GCP_PROJECT_ID/$GCP_REPO_NAME"
+          APP_NAME=$(basename $GITHUB_REPOSITORY)
+          
           if [ -f backend/VERSION ]; then
             VERSION=$(cat backend/VERSION)
           elif [ -f backend/package.json ]; then
@@ -46,32 +48,29 @@ jobs:
           else
             VERSION="0.0.1"
           fi
-          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$GCP_PROJECT_ID/$GCP_REPO_NAME/$REPO_NAME:$VERSION"
-          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          
+          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$REPO_PATH/$APP_NAME:$VERSION"
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Image to be used: $IMAGE_NAME"
 
       - name: Build Docker image
-        run: |
-          docker build ./backend -t ${{ steps.vars.outputs.image_name }}
+        run: docker build ./backend -t ${{ steps.vars.outputs.image_name }}
 
-      - name: Push Docker image to GCR
-        run: |
-          cat ./gcloud-api-key.json | docker login -u _json_key --password-stdin https://$GCP_REGISTRY_HOSTNAME
-          docker push ${{ steps.vars.outputs.image_name }}
+      - name: Push Docker image
+        run: docker push ${{ steps.vars.outputs.image_name }}
+        
+      - name: Complete
+        run: echo "Done!"
 
-      - name: Get GKE credentials
-        run: |
-          ./google-cloud-sdk/bin/gcloud container clusters get-credentials $GKE_CLUSTER \
-            --zone $GKE_ZONE --project $GCP_PROJECT_ID
+#       - name: Get GKE credentials
+#         run: |
+#           ./google-cloud-sdk/bin/gcloud container clusters get-credentials $GKE_CLUSTER \
+#             --zone $GKE_ZONE --project $GCP_PROJECT_ID
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'latest'
-
-      - name: Deploy to GKE
-        run: |
-          sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
-          kubectl apply -f backend/deployment.yaml
-          kubectl rollout status deployment/backend-deployment --namespace=default
+#       - name: Deploy to GKE
+#         run: |
+#           sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
+#           kubectl apply -f backend/deployment.yaml
+#           kubectl rollout status deployment/backend-deployment --namespace=default
