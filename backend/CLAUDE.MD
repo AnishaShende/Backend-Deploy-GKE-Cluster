@@ -186,3 +186,5 @@ src/
 - Import generated Prisma types from `../generated/prisma`
 - Use default exports for main module functionality
 - Use named exports for utility functions and multiple exports
+
+### testing
