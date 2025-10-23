@@ -12,12 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      # Assuming your GKE cluster is in 'us-central1-a' or similar. 
-      # If you're using Artifact Registry, the hostname is typically 'REGION-docker.pkg.dev'.
-      # For Container Registry (GCR), it's typically 'gcr.io' or 'us.gcr.io', etc.
-      # You can hardcode this or add a new secret. We'll use gcr.io as a default.
+      # Assuming GCR. Update if you use Artifact Registry (e.g., region-docker.pkg.dev)
       GCP_REGISTRY_HOSTNAME: gcr.io 
-      GCP_REPO_NAME: my-backend-repo # Replace with your actual repository name (e.g., in Artifact Registry)
+      # Placeholder for the image repository path (e.g., 'backend-app')
+      GCP_REPO_NAME: my-backend-repo 
       GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
       GKE_ZONE: ${{ secrets.GKE_ZONE }}
 
@@ -26,24 +24,21 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 'Authenticate to Google Cloud'
+        # This action securely uses the raw JSON content from your GCP_SA_KEY secret
         uses: 'google-github-actions/auth@v2'
         with:
-          # Use your GCP_SA_KEY secret, which should contain the JSON key content
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up Docker configuration
-        run: |
-          # Configure Docker to authenticate to GCR or Artifact Registry
-          gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }}
+      - name: Set up Docker configuration for pushing images
+        # Configures Docker to use the authenticated gcloud credentials
+        run: gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }}
 
       - name: Set image name with version
         id: vars
         run: |
-          # Use a variable for the image repository path
+          # The REPO_PATH for GCR/Artifact Registry often includes the project ID and a repository name
           REPO_PATH="$GCP_PROJECT_ID/$GCP_REPO_NAME" 
-          
-          # Use the repository name from GitHub (e.g., 'my-app' from 'user/my-app')
-          REPO_NAME=$(basename $GITHUB_REPOSITORY) 
+          APP_NAME=$(basename $GITHUB_REPOSITORY) # e.g., 'Backend-Deploy-GKE-Cluster'
           
           if [ -f backend/VERSION ]; then
             VERSION=$(cat backend/VERSION)
@@ -54,21 +49,19 @@ jobs:
           fi
           
           # Final image path: REGISTRY_HOSTNAME/PROJECT_ID/REPO_NAME/APP_NAME:VERSION
-          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$REPO_PATH/$REPO_NAME:$VERSION"
+          IMAGE_NAME="$GCP_REGISTRY_HOSTNAME/$REPO_PATH/$APP_NAME:$VERSION"
           
-          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          echo "Using image: $IMAGE_NAME"
+          echo "Image to be used: $IMAGE_NAME"
 
       - name: Build and Push Docker image
         run: |
-          # Note: Since Docker is already configured to use the authenticated gcloud credentials,
-          # you can build and push in one step, or consecutively without extra login.
           docker build ./backend -t ${{ steps.vars.outputs.image_name }}
           docker push ${{ steps.vars.outputs.image_name }}
 
-      - name: Get GKE credentials and Install kubectl
+      - name: Get GKE credentials
+        # This action fetches GKE credentials and ensures kubectl is installed
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ env.GKE_CLUSTER }}
@@ -77,11 +70,11 @@ jobs:
 
       - name: Deploy to GKE
         run: |
-          # Replace the placeholder in the deployment YAML
+          # Substitute the image placeholder in your deployment YAML
           sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
           
-          # Apply the configuration
+          # Apply the configuration to the GKE cluster
           kubectl apply -f backend/deployment.yaml
           
-          # Wait for the deployment to finish
+          # Wait for the deployment to complete
           kubectl rollout status deployment/backend-deployment --namespace=default
