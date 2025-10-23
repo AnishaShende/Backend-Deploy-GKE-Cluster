@@ -60,14 +60,17 @@ jobs:
 
       - name: Push Docker image
         run: docker push ${{ steps.vars.outputs.image_name }}
+        
+      - name: Complete
+        run: echo "Done!"
 
-      - name: Get GKE credentials
-        run: |
-          ./google-cloud-sdk/bin/gcloud container clusters get-credentials $GKE_CLUSTER \
-            --zone $GKE_ZONE --project $GCP_PROJECT_ID
+#       - name: Get GKE credentials
+#         run: |
+#           ./google-cloud-sdk/bin/gcloud container clusters get-credentials $GKE_CLUSTER \
+#             --zone $GKE_ZONE --project $GCP_PROJECT_ID
 
-      - name: Deploy to GKE
-        run: |
-          sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
-          kubectl apply -f backend/deployment.yaml
-          kubectl rollout status deployment/backend-deployment --namespace=default
+#       - name: Deploy to GKE
+#         run: |
+#           sed -i "s|IMAGE_PLACEHOLDER|${{ steps.vars.outputs.image_name }}|g" backend/deployment.yaml
+#           kubectl apply -f backend/deployment.yaml
+#           kubectl rollout status deployment/backend-deployment --namespace=default
