@@ -13,7 +13,7 @@ jobs:
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
       GCP_REGISTRY_HOSTNAME: gcr.io
-      GCP_REPO_NAME: my-backend-repo
+      GCP_REPO_NAME: uptiq-v2-app-builder-publish-backend
       GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
       GKE_ZONE: ${{ secrets.GKE_ZONE }}
 
@@ -34,9 +34,10 @@ jobs:
       - name: Set image name and version
         id: vars
         run: |
-          REPO_PATH="${GCP_PROJECT_ID}/${GCP_REPO_NAME}"
-          APP_NAME=$(basename $GITHUB_REPOSITORY | tr '[:upper:]' '[:lower:]')
+          # GitHub repository name (without owner)
+          IMAGE_NAME=$(basename $GITHUB_REPOSITORY | tr '[:upper:]' '[:lower:]')
 
+          # Determine version
           if [ -f backend/VERSION ]; then
             VERSION=$(cat backend/VERSION)
           elif [ -f backend/package.json ]; then
@@ -45,11 +46,12 @@ jobs:
             VERSION="0.0.1"
           fi
 
-          IMAGE_NAME="${GCP_REGISTRY_HOSTNAME}/${REPO_PATH}/${APP_NAME}:${VERSION}"
+          # Full Docker image path
+          FULL_IMAGE_NAME="${GCP_REGISTRY_HOSTNAME}/${GCP_PROJECT_ID}/${GCP_REPO_NAME}/${IMAGE_NAME}:${VERSION}"
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
-          echo "Image to be used: $IMAGE_NAME"
+          echo "image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Image to be used: $FULL_IMAGE_NAME"
 
       - name: Build Docker image
         run: docker build ./backend -t ${{ steps.vars.outputs.image_name }}
