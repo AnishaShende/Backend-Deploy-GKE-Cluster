@@ -50,8 +50,14 @@ jobs:
           echo "image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
           echo "Image to be used: $FULL_IMAGE_NAME"
 
-      - name: Configure Docker for GCR
-        run: gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }} --quiet
+      # - name: Configure Docker for GCR
+      #   run: gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }} --quiet
+
+      - name: Authenticate Docker with Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGISTRY_HOSTNAME }} --quiet
+          gcloud auth print-access-token | docker login ${{ env.GCP_REGISTRY_HOSTNAME }} \
+            -u oauth2accesstoken --password-stdin
         
       - name: Build Docker image
         run: docker build ./backend -t ${{ steps.vars.outputs.image_name }}
