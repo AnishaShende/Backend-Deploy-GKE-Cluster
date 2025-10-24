@@ -54,5 +54,8 @@ jobs:
       - name: Build Docker image
         run: docker build ./backend -t ${{ steps.vars.outputs.image_name }}
 
+      - name: Print Docker path
+        run: echo ${{ steps.vars.outputs.image_name }}
+
       - name: Push Docker image
         run: docker push ${{ steps.vars.outputs.image_name }}
