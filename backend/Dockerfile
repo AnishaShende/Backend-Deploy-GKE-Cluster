@@ -1,32 +1,38 @@
 FROM node:22.17.0-alpine
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
 
-RUN apk add --no-cache openssl
-RUN apk add --no-cache git
-RUN apk add --no-cache rsync
+RUN apk add --no-cache openssl git bash
 
 # Create group and modify existing node user to match Kubernetes security context
 RUN addgroup -g 3000 appgroup && \
     adduser node appgroup
 
-# Increase file watcher limit
-RUN echo fs.inotify.max_user_watches=524288 | tee -a /etc/sysctl.conf
+WORKDIR /app
 
-COPY entrypoint.preview.sh /entrypoint.preview.sh
-RUN chmod +x /entrypoint.preview.sh
+# Copy package files
+COPY package.json .
+COPY yarn.lock .
+
+# Install all dependencies (including dev dependencies for build)
+RUN yarn install --frozen-lockfile
+
+# Copy source code and configuration files
+COPY . .
+
+# Generate necessary files and build
+RUN yarn generate:swagger-docs && \
+    yarn generate:prisma-client && \
+    yarn build
+
+# Remove all dependencies and reinstall only production dependencies
+RUN rm -rf node_modules && \
+    yarn install --production --frozen-lockfile
+
+# Remove unnecessary files to reduce image size
+RUN rm -rf src tests
 
 # Switch to non-root user
 USER node
 
-WORKDIR /app/project
-
-COPY package.json .
-COPY pnpm-lock.yaml .
-RUN pnpm install
-
 EXPOSE 3000
 
-ENTRYPOINT ["/entrypoint.preview.sh"]
-
+ENTRYPOINT ["/app/entrypoint.preview.sh"]
